@@ -50,9 +50,9 @@ THE SOFTWARE.
 
 // Arduino Wire library is required if I2Cdev I2CDEV_ARDUINO_WIRE implementation
 // is used in I2Cdev.h
-
-#include "Wire.h"
-
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+    #include "Wire.h"
+#endif
 
 // class default I2C address is 0x68
 // specific I2C addresses may be passed as a parameter here
@@ -81,6 +81,16 @@ MPU6050 mpu;
 
 
 
+// uncomment "OUTPUT_READABLE_QUATERNION" if you want to see the actual
+// quaternion components in a [w, x, y, z] format (not best for parsing
+// on a remote host such as Processing or something though)
+//#define OUTPUT_READABLE_QUATERNION
+
+// uncomment "OUTPUT_READABLE_EULER" if you want to see Euler angles
+// (in degrees) calculated from the quaternions coming from the FIFO.
+// Note that Euler angles suffer from gimbal lock (for more info, see
+// http://en.wikipedia.org/wiki/Gimbal_lock)
+//#define OUTPUT_READABLE_EULER
 
 // uncomment "OUTPUT_READABLE_YAWPITCHROLL" if you want to see the yaw/
 // pitch/roll angles (in degrees) calculated from the quaternions coming
@@ -88,6 +98,24 @@ MPU6050 mpu;
 // Also note that yaw/pitch/roll angles suffer from gimbal lock (for
 // more info, see: http://en.wikipedia.org/wiki/Gimbal_lock)
 #define OUTPUT_READABLE_YAWPITCHROLL
+
+// uncomment "OUTPUT_READABLE_REALACCEL" if you want to see acceleration
+// components with gravity removed. This acceleration reference frame is
+// not compensated for orientation, so +X is always +X according to the
+// sensor, just without the effects of gravity. If you want acceleration
+// compensated for orientation, us OUTPUT_READABLE_WORLDACCEL instead.
+//#define OUTPUT_READABLE_REALACCEL
+
+// uncomment "OUTPUT_READABLE_WORLDACCEL" if you want to see acceleration
+// components with gravity removed and adjusted for the world frame of
+// reference (yaw is relative to initial orientation, since no magnetometer
+// is present in this case). Could be quite handy in some cases.
+//#define OUTPUT_READABLE_WORLDACCEL
+
+// uncomment "OUTPUT_TEAPOT" if you want output that matches the
+// format used for the InvenSense teapot demo
+//#define OUTPUT_TEAPOT
+
 
 
 #define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
@@ -110,25 +138,12 @@ VectorFloat gravity;    // [x, y, z]            gravity vector
 float euler[3];         // [psi, theta, phi]    Euler angle container
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
-// XRobots vars
-
-int ch1;
-int ch2;
-int ch3;
-int ch4;
-int ch5;
-int ch6;
-int but1;
-int but2;
-int but3;
-int but4;
-int but5;
-int but6;
-
-float roll;
 float pitch;
+float roll;
 
-int pot;
+// packet structure for InvenSense teapot demo
+uint8_t teapotPacket[14] = { '$', 0x02, 0,0, 0,0, 0,0, 0,0, 0x00, 0x00, '\r', '\n' };
+
 
 
 // ================================================================
@@ -148,18 +163,17 @@ void dmpDataReady() {
 
 void setup() {
     // join I2C bus (I2Cdev library doesn't do this automatically)
-
-    Wire.begin();
-    TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz). Comment this line if having compilation difficulties with TWBR.
-
-
-
+    #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+        Wire.begin();
+        TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz). Comment this line if having compilation difficulties with TWBR.
+    #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+        Fastwire::setup(400, true);
+    #endif
 
     // initialize serial communication
     // (115200 chosen because it is required for Teapot Demo output, but it's
     // really up to you depending on your project)
     Serial.begin(115200);
-    Serial1.begin(115200);
     while (!Serial); // wait for Leonardo enumeration, others continue immediately
 
     // NOTE: 8MHz or slower host processors, like the Teensy @ 3.3v or Ardunio
@@ -169,44 +183,38 @@ void setup() {
     // crystal solution for the UART timer.
 
     // initialize device
-    Serial.println(F("Initializing I2C devices..."));
+    //Serial.println(F("Initializing I2C devices..."));
     mpu.initialize();
 
     // verify connection
-    Serial.println(F("Testing device connections..."));
-    Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
-
-    /* // wait for ready
-    Serial.println(F("\nSend any character to begin DMP programming and demo: "));
-    while (Serial.available() && Serial.read()); // empty buffer
-    while (!Serial.available());                 // wait for data
-    while (Serial.available() && Serial.read()); // empty buffer again
-
-    */
+    //Serial.println(F("Testing device connections..."));
+    //Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
 
     // load and configure the DMP
-    Serial.println(F("Initializing DMP..."));
+    //Serial.println(F("Initializing DMP..."));
     devStatus = mpu.dmpInitialize();
 
     // supply your own gyro offsets here, scaled for min sensitivity
-    mpu.setXGyroOffset(220);
-    mpu.setYGyroOffset(76);
-    mpu.setZGyroOffset(-85);
-    mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
+    mpu.setXGyroOffset(51);
+    mpu.setYGyroOffset(11);
+    mpu.setZGyroOffset(-122);
+    mpu.setXAccelOffset(-2737);
+    mpu.setYAccelOffset(-2969);
+    mpu.setZAccelOffset(1611);
 
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
         // turn on the DMP, now that it's ready
-        Serial.println(F("Enabling DMP..."));
+        //Serial.println(F("Enabling DMP..."));
         mpu.setDMPEnabled(true);
 
         // enable Arduino interrupt detection
-        Serial.println(F("Enabling interrupt detection (Arduino external interrupt 0)..."));
+        //Serial.println(F("Enabling interrupt detection (Arduino external interrupt 0)..."));
         attachInterrupt(0, dmpDataReady, RISING);
         mpuIntStatus = mpu.getIntStatus();
 
         // set our DMP Ready flag so the main loop() function knows it's okay to use it
-        Serial.println(F("DMP ready! Waiting for first interrupt..."));
+        //Serial.println(F("DMP ready! Waiting for first interrupt..."));
         dmpReady = true;
 
         // get expected DMP packet size for later comparison
@@ -216,16 +224,13 @@ void setup() {
         // 1 = initial memory load failed
         // 2 = DMP configuration updates failed
         // (if it's going to break, usually the code will be 1)
-        Serial.print(F("DMP Initialization failed (code "));
-        Serial.print(devStatus);
-        Serial.println(F(")"));
+        //Serial.print(F("DMP Initialization failed (code "));
+        //Serial.print(devStatus);
+        //Serial.println(F(")"));
     }
 
     // configure LED for output
     pinMode(LED_PIN, OUTPUT);
-
-    pinMode(43, OUTPUT);
-    pinMode(45, OUTPUT);
 }
 
 
@@ -272,112 +277,35 @@ void loop() {
 
         // read a packet from FIFO
         mpu.getFIFOBytes(fifoBuffer, packetSize);
-        //mpu.resetFIFO();  // added by XRobots
         
         // track FIFO count here in case there is > 1 packet available
         // (this lets us immediately read more without waiting for an interrupt)
         fifoCount -= packetSize;
+
 
         #ifdef OUTPUT_READABLE_YAWPITCHROLL
             // display Euler angles in degrees
             mpu.dmpGetQuaternion(&q, fifoBuffer);
             mpu.dmpGetGravity(&gravity, &q);
             mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-            
-            /*
-            Serial.print("\t");
-            Serial.print(ypr[1] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(ypr[2] * 180/M_PI);
-            */
-
-            // ****************XRobots main loop code*****************************//
-            
-            pitch = (ypr[1] * 180/M_PI);
-            roll = (ypr[2] * 180/M_PI);
-
-            Serial.print("Roll: ");
-            Serial.print(roll);
-            Serial.print("  Pitch: ");
-            Serial.print(pitch);
- 
+            //Serial.print("ypr\t");
+            //Serial.print(ypr[0] * 180/M_PI);
+            //Serial.print("\t");
+            //Serial.print(ypr[1] * 180/M_PI);
+            //Serial.print("\t");
+            //Serial.println(ypr[2] * 180/M_PI);
+            pitch = ypr[1]* 180/M_PI;
+            roll = ypr[2]* 180/M_PI;
         #endif
 
+        Serial.print (pitch,4);
+        Serial.print (",");
+        Serial.print(roll,4);
+        Serial.print('\n');   
 
 
-    if (Serial1.available() > 0) {
-
-    // look for the next valid integer in the incoming serial stream:
-
-        ch1 = Serial1.parseInt();
-        ch2 = Serial1.parseInt();
-        ch3 = Serial1.parseInt();
-        ch4 = Serial1.parseInt();
-        ch5 = Serial1.parseInt();
-        ch6 = Serial1.parseInt();
-        but1 = Serial1.parseInt();
-        but2 = Serial1.parseInt();
-        but3 = Serial1.parseInt();
-        but4 = Serial1.parseInt();  //enable pin
-        but5 = Serial1.parseInt();
-        but6 = Serial1.parseInt();  
-          
-        
-        // look for the newline. That's the end of your sentence:
-        if (Serial1.read() == '\n') {     
-        } 
-             }
-       
-        Serial.print ("  Remote: ");
-        Serial.print (ch1);
-        Serial.print (" , ");
-        Serial.print (ch2);
-        Serial.print (" , ");
-        Serial.print (ch3);
-        Serial.print (" , ");
-        Serial.print (ch4);
-        Serial.print (" , ");
-        Serial.print (ch5);
-        Serial.print (" , ");
-        Serial.print (ch6);
-        Serial.print (" , ");
-        Serial.print (but1);
-        Serial.print (" , ");
-        Serial.print (but2);
-        Serial.print (" , ");
-        Serial.print (but3);
-        Serial.print (" , ");
-        Serial.print (but4);  //enable pin
-        Serial.print (" , ");
-        Serial.print (but5);
-        Serial.print (" , ");
-        Serial.print (but6);
-
-        pot = analogRead(A0);   // read trousers pot
-        Serial.print (" Pot: ");
-        Serial.print (pot);
-
-
-
-        if(roll>10) {
-          digitalWrite(43, HIGH);
-          }
-        else if (roll<10) {
-          digitalWrite(43,LOW);
-        }
-
-        if(but4 == 0) {
-          digitalWrite(45, HIGH);
-          Serial.println( " ENABLE " );
-          }
-        else if (but4 == 1) {
-          digitalWrite(45, LOW);
-          Serial.println( " DISABLE " );
-        }
-
-        
-        
-        //delay(15);  // delay to test how much time is left in the loop - leave commented out.
-
+        // blink LED to indicate activity
+        blinkState = !blinkState;
+        digitalWrite(LED_PIN, blinkState);
     }
 }
